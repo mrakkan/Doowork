@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # ==================== DATABASES ====================
+  
+  # 1. User Database
+  user-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: user_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d user_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Project Database
+  project-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: project_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - project_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d project_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. Task Database
+  task-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: task_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - task_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d task_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 4. Notification Database
+  notification-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: notification_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== SERVICES ====================
+
+  # User Service (Port 8081)
+  # - Register, Login, Logout
+  # - Member Management (Add, Edit, Delete)
+  user-service:
+    build: 
+      context: ./user-service
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_URL=host=user-db user=admin password=password dbname=user_db port=5432 sslmode=disable
+      - JWT_SECRET=your-secret-key-change-in-production
+      - PORT=8081
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+  # Project Service (Port 8082)
+  # - Project CRUD
+  # - Project Status
+  # - Project Members
+  project-service:
+    build: 
+      context: ./project-service
+    ports:
+      - "8082:8082"
+    environment:
+      - DATABASE_URL=host=project-db user=admin password=password dbname=project_db port=5432 sslmode=disable
+      - JWT_SECRET=your-secret-key-change-in-production
+      - PORT=8082
+    depends_on:
+      project-db:
+        condition: service_healthy
+
+  # Task Service (Port 8083)
+  # - Task CRUD
+  # - Task Assignment
+  # - Task Status
+  # - Time Tracking
+  # - Price Calculation
+  task-service:
+    build: 
+      context: ./task-service
+    ports:
+      - "8083:8083"
+    environment:
+      - DATABASE_URL=host=task-db user=admin password=password dbname=task_db port=5432 sslmode=disable
+      - JWT_SECRET=your-secret-key-change-in-production
+      - PORT=8083
+    depends_on:
+      task-db:
+        condition: service_healthy
+
+  # Notification Service (Port 8084)
+  # - Send Notifications
+  # - Schedule Notifications
+  # - Notification Preferences
+  notification-service:
+    build: 
+      context: ./notification-service
+    ports:
+      - "8084:8084"
+    environment:
+      - DATABASE_URL=host=notification-db user=admin password=password dbname=notification_db port=5432 sslmode=disable
+      - JWT_SECRET=your-secret-key-change-in-production
+      - PORT=8084
+      - TZ=Asia/Bangkok
+    depends_on:
+      notification-db:
+        condition: service_healthy
+
+volumes:
+  user_db_data:
+  project_db_data:
+  task_db_data:
+  notification_db_data:
