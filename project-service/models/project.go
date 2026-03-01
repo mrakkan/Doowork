@@ -29,6 +29,14 @@ type ProjectMember struct {
 	ProjectID uint           `gorm:"not null" json:"project_id"`
 	UserID    uint           `gorm:"not null" json:"user_id"`
 	Role      string         `gorm:"default:member" json:"role"` // owner, admin, member
+	User      *UserSummary   `gorm:"-" json:"user,omitempty"`
+}
+
+type UserSummary struct {
+	ID    uint   `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
 }
 
 // Request/Response structs

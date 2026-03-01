@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"project-service/models"
@@ -11,11 +14,62 @@ import (
 )
 
 type Handler struct {
-	db *gorm.DB
+	db             *gorm.DB
+	userServiceURL string
+	httpClient     *http.Client
 }
 
-func NewHandler(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *gorm.DB, userServiceURL string) *Handler {
+	if userServiceURL == "" {
+		userServiceURL = getEnv("USER_SERVICE_URL", "http://user-service:8081")
+	}
+
+	return &Handler{
+		db:             db,
+		userServiceURL: userServiceURL,
+		httpClient:     &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (h *Handler) fetchUserByID(userID uint) (*models.UserSummary, bool, error) {
+	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+	resp, err := h.httpClient.Get(url)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("user service returned status %d", resp.StatusCode)
+	}
+
+	var user models.UserSummary
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, false, err
+	}
+
+	return &user, true, nil
+}
+
+func (h *Handler) enrichMembers(members []models.ProjectMember) []models.ProjectMember {
+	for index := range members {
+		user, exists, err := h.fetchUserByID(members[index].UserID)
+		if err != nil || !exists {
+			continue
+		}
+		members[index].User = user
+	}
+	return members
 }
 
 // CreateProject creates a new project
@@ -27,6 +81,15 @@ func (h *Handler) CreateProject(c *gin.Context) {
 	}
 
 	userID, _ := c.Get("user_id")
+	ownerID := userID.(uint)
+
+	if _, exists, err := h.fetchUserByID(ownerID); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate owner with user service"})
+		return
+	} else if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner user not found"})
+		return
+	}
 
 	project := models.Project{
 		Name:        req.Name,
@@ -35,7 +98,7 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		StartDate:   req.StartDate,
 		EndDate:     req.EndDate,
 		Budget:      req.Budget,
-		OwnerID:     userID.(uint),
+		OwnerID:     ownerID,
 	}
 
 	if err := h.db.Create(&project).Error; err != nil {
@@ -46,7 +109,7 @@ func (h *Handler) CreateProject(c *gin.Context) {
 	// Add owner as project member
 	member := models.ProjectMember{
 		ProjectID: project.ID,
-		UserID:    userID.(uint),
+		UserID:    ownerID,
 		Role:      "owner",
 	}
 	h.db.Create(&member)
@@ -76,6 +139,10 @@ func (h *Handler) GetProjects(c *gin.Context) {
 		return
 	}
 
+	for i := range projects {
+		projects[i].Members = h.enrichMembers(projects[i].Members)
+	}
+
 	c.JSON(http.StatusOK, projects)
 }
 
@@ -89,7 +156,27 @@ func (h *Handler) GetProject(c *gin.Context) {
 		return
 	}
 
+	project.Members = h.enrichMembers(project.Members)
+
 	c.JSON(http.StatusOK, project)
+}
+
+// GetProjectInternal returns minimal project data for internal service-to-service calls
+func (h *Handler) GetProjectInternal(c *gin.Context) {
+	id := c.Param("id")
+
+	var project models.Project
+	if err := h.db.First(&project, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":       project.ID,
+		"name":     project.Name,
+		"status":   project.Status,
+		"owner_id": project.OwnerID,
+	})
 }
 
 // UpdateProject updates a project
@@ -210,6 +297,16 @@ func (h *Handler) AddProjectMember(c *gin.Context) {
 		return
 	}
 
+	user, exists, err := h.fetchUserByID(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate user with user service"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User not found in user service"})
+		return
+	}
+
 	// Check if already a member
 	var existingMember models.ProjectMember
 	if err := h.db.Where("project_id = ? AND user_id = ?", projectID, req.UserID).First(&existingMember).Error; err == nil {
@@ -233,6 +330,8 @@ func (h *Handler) AddProjectMember(c *gin.Context) {
 		return
 	}
 
+	member.User = user
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Member added successfully",
 		"member":  member,
@@ -248,6 +347,8 @@ func (h *Handler) GetProjectMembers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch members"})
 		return
 	}
+
+	members = h.enrichMembers(members)
 
 	c.JSON(http.StatusOK, members)
 }

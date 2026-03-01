@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"notification-service/models"
@@ -11,11 +13,46 @@ import (
 )
 
 type Handler struct {
-	db *gorm.DB
+	db             *gorm.DB
+	userServiceURL string
+	httpClient     *http.Client
 }
 
-func NewHandler(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *gorm.DB, userServiceURL string) *Handler {
+	if userServiceURL == "" {
+		userServiceURL = getEnv("USER_SERVICE_URL", "http://user-service:8081")
+	}
+
+	return &Handler{
+		db:             db,
+		userServiceURL: userServiceURL,
+		httpClient:     &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (h *Handler) userExists(userID uint) (bool, error) {
+	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+	resp, err := h.httpClient.Get(url)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("user service returned status %d", resp.StatusCode)
+	}
+
+	return true, nil
 }
 
 // SendNotification sends a notification to a user
@@ -23,6 +60,16 @@ func (h *Handler) SendNotification(c *gin.Context) {
 	var req models.SendNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userExists, err := h.userExists(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate user with user service"})
+		return
+	}
+	if !userExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User not found"})
 		return
 	}
 
@@ -173,6 +220,16 @@ func (h *Handler) ScheduleNotification(c *gin.Context) {
 	var req models.ScheduleNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userExists, err := h.userExists(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate user with user service"})
+		return
+	}
+	if !userExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User not found"})
 		return
 	}
 

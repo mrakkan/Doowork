@@ -39,7 +39,11 @@ func main() {
 	db.AutoMigrate(&models.Task{}, &models.TaskAssignment{}, &models.TimeLog{})
 
 	// Setup handlers
-	h := handlers.NewHandler(db)
+	h := handlers.NewHandler(
+		db,
+		getEnv("USER_SERVICE_URL", "http://user-service:8081"),
+		getEnv("PROJECT_SERVICE_URL", "http://project-service:8082"),
+	)
 
 	// Setup router
 	r := gin.Default()

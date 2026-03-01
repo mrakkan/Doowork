@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -12,11 +14,69 @@ import (
 )
 
 type Handler struct {
-	db *gorm.DB
+	db                *gorm.DB
+	userServiceURL    string
+	projectServiceURL string
+	httpClient        *http.Client
 }
 
-func NewHandler(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *gorm.DB, userServiceURL, projectServiceURL string) *Handler {
+	if userServiceURL == "" {
+		userServiceURL = getEnv("USER_SERVICE_URL", "http://user-service:8081")
+	}
+	if projectServiceURL == "" {
+		projectServiceURL = getEnv("PROJECT_SERVICE_URL", "http://project-service:8082")
+	}
+
+	return &Handler{
+		db:                db,
+		userServiceURL:    userServiceURL,
+		projectServiceURL: projectServiceURL,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (h *Handler) userExists(userID uint) (bool, error) {
+	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+	resp, err := h.httpClient.Get(url)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("user service returned status %d", resp.StatusCode)
+	}
+
+	return true, nil
+}
+
+func (h *Handler) projectExists(projectID uint) (bool, error) {
+	url := fmt.Sprintf("%s/internal/projects/%d", h.projectServiceURL, projectID)
+	resp, err := h.httpClient.Get(url)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("project service returned status %d", resp.StatusCode)
+	}
+
+	return true, nil
 }
 
 // CreateTask creates a new task
@@ -28,6 +88,27 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	}
 
 	userID, _ := c.Get("user_id")
+	creatorID := userID.(uint)
+
+	projectExists, err := h.projectExists(req.ProjectID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate project with project service"})
+		return
+	}
+	if !projectExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Project not found"})
+		return
+	}
+
+	userExists, err := h.userExists(creatorID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate user with user service"})
+		return
+	}
+	if !userExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Creator user not found"})
+		return
+	}
 
 	priority := req.Priority
 	if priority == "" {
@@ -40,7 +121,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		Status:         "todo",
 		Priority:       priority,
 		ProjectID:      req.ProjectID,
-		CreatorID:      userID.(uint),
+		CreatorID:      creatorID,
 		DueDate:        req.DueDate,
 		EstimatedHours: req.EstimatedHours,
 		HourlyRate:     req.HourlyRate,
@@ -185,6 +266,16 @@ func (h *Handler) AssignTask(c *gin.Context) {
 	var req models.AssignTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userExists, err := h.userExists(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to validate user with user service"})
+		return
+	}
+	if !userExists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User not found"})
 		return
 	}
 

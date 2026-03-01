@@ -39,7 +39,7 @@ func main() {
 	db.AutoMigrate(&models.Project{}, &models.ProjectMember{})
 
 	// Setup handlers
-	h := handlers.NewHandler(db)
+	h := handlers.NewHandler(db, getEnv("USER_SERVICE_URL", "http://user-service:8081"))
 
 	// Setup router
 	r := gin.Default()
@@ -48,6 +48,7 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+	r.GET("/internal/projects/:id", h.GetProjectInternal)
 
 	// Protected routes
 	api := r.Group("/api")

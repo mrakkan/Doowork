@@ -45,7 +45,7 @@ func main() {
 	defer sched.Stop()
 
 	// Setup handlers
-	h := handlers.NewHandler(db)
+	h := handlers.NewHandler(db, getEnv("USER_SERVICE_URL", "http://user-service:8081"))
 
 	// Setup router
 	r := gin.Default()

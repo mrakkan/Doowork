@@ -1,9 +1,8 @@
 version: '3.8'
 
 services:
-  # ==================== DATABASES ====================
   
-  # 1. User Database
+  #User DB
   user-db:
     image: postgres:15-alpine
     environment:
@@ -20,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. Project Database
+  #Project DB
   project-db:
     image: postgres:15-alpine
     environment:
@@ -37,7 +36,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 3. Task Database
+  #Task DB
   task-db:
     image: postgres:15-alpine
     environment:
@@ -54,7 +53,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 4. Notification Database
+  # 4. Notification DB
   notification-db:
     image: postgres:15-alpine
     environment:
@@ -71,7 +70,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ==================== SERVICES ====================
+
 
   # User Service (Port 8081)
   # - Register, Login, Logout
@@ -101,6 +100,7 @@ services:
     environment:
       - DATABASE_URL=host=project-db user=admin password=password dbname=project_db port=5432 sslmode=disable
       - JWT_SECRET=your-secret-key-change-in-production
+      - USER_SERVICE_URL=http://user-service:8081
       - PORT=8082
     depends_on:
       project-db:
@@ -120,6 +120,8 @@ services:
     environment:
       - DATABASE_URL=host=task-db user=admin password=password dbname=task_db port=5432 sslmode=disable
       - JWT_SECRET=your-secret-key-change-in-production
+      - USER_SERVICE_URL=http://user-service:8081
+      - PROJECT_SERVICE_URL=http://project-service:8082
       - PORT=8083
     depends_on:
       task-db:
@@ -137,6 +139,7 @@ services:
     environment:
       - DATABASE_URL=host=notification-db user=admin password=password dbname=notification_db port=5432 sslmode=disable
       - JWT_SECRET=your-secret-key-change-in-production
+      - USER_SERVICE_URL=http://user-service:8081
       - PORT=8084
       - TZ=Asia/Bangkok
     depends_on:

@@ -47,6 +47,7 @@ func main() {
 	// Public routes
 	r.POST("/api/auth/register", h.Register)
 	r.POST("/api/auth/login", h.Login)
+	r.GET("/internal/users/:id", h.GetUserByID)
 
 	// Protected routes
 	auth := r.Group("/api")

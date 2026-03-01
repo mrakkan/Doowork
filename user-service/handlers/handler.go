@@ -146,6 +146,24 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// GetUserByID returns a user by ID for internal service-to-service calls
+func (h *Handler) GetUserByID(c *gin.Context) {
+	id := c.Param("id")
+
+	var user models.User
+	if err := h.db.First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":    user.ID,
+		"email": user.Email,
+		"name":  user.Name,
+		"role":  user.Role,
+	})
+}
+
 // AddMember adds a member to a project
 func (h *Handler) AddMember(c *gin.Context) {
 	var req models.AddMemberRequest
