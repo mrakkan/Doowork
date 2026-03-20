@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"notification-service/messaging"
+	"notification-service/monitoring"
 	"os"
 	"time"
 
@@ -37,7 +39,7 @@ func main() {
 	}
 
 	// Auto migrate
-	db.AutoMigrate(&models.Notification{}, &models.ScheduledNotification{}, &models.NotificationPreference{})
+	db.AutoMigrate(&models.Notification{}, &models.ScheduledNotification{}, &models.NotificationPreference{}, &models.ProcessedEvent{})
 
 	// Setup scheduler for scheduled notifications
 	sched := scheduler.NewScheduler(db)
@@ -45,10 +47,23 @@ func main() {
 	defer sched.Stop()
 
 	// Setup handlers
-	h := handlers.NewHandler(db, getEnv("USER_SERVICE_URL", "http://user-service:8081"))
+	amqpURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+	consumer, err := messaging.ConnectWithRetry(amqpURL, "notification-service-events", 10, 3*time.Second)
+	if err != nil {
+		log.Printf("RabbitMQ unavailable, continuing without event consume: %v", err)
+	}
+	defer func() {
+		if consumer != nil {
+			consumer.Close()
+		}
+	}()
+
+	h := handlers.NewHandler(db, getEnv("USER_SERVICE_URL", "http://user-service:8081"), consumer)
+	h.StartEventConsumer()
 
 	// Setup router
 	r := gin.Default()
+	monitoring.SetupMetrics(r, "notification-service")
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {

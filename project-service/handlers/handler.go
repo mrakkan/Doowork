@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"project-service/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/sony/gobreaker"
 	"gorm.io/gorm"
 )
 
@@ -17,6 +20,7 @@ type Handler struct {
 	db             *gorm.DB
 	userServiceURL string
 	httpClient     *http.Client
+	userBreaker    *gobreaker.CircuitBreaker
 }
 
 func NewHandler(db *gorm.DB, userServiceURL string) *Handler {
@@ -24,10 +28,21 @@ func NewHandler(db *gorm.DB, userServiceURL string) *Handler {
 		userServiceURL = getEnv("USER_SERVICE_URL", "http://user-service:8081")
 	}
 
+	userBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "project-user-service",
+		MaxRequests: 3,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
 	return &Handler{
 		db:             db,
 		userServiceURL: userServiceURL,
 		httpClient:     &http.Client{Timeout: 5 * time.Second},
+		userBreaker:    userBreaker,
 	}
 }
 
@@ -39,11 +54,19 @@ func getEnv(key, fallback string) string {
 }
 
 func (h *Handler) fetchUserByID(userID uint) (*models.UserSummary, bool, error) {
-	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
-	resp, err := h.httpClient.Get(url)
+	result, err := h.userBreaker.Execute(func() (interface{}, error) {
+		url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+		resp, err := h.httpClient.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	})
 	if err != nil {
 		return nil, false, err
 	}
+
+	resp := result.(*http.Response)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -59,6 +82,23 @@ func (h *Handler) fetchUserByID(userID uint) (*models.UserSummary, bool, error) 
 	}
 
 	return &user, true, nil
+}
+
+func (h *Handler) enqueueOutboxEvent(tx *gorm.DB, eventType, routingKey string, payload interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	outbox := models.OutboxEvent{
+		EventID:    uuid.NewString(),
+		EventType:  eventType,
+		RoutingKey: routingKey,
+		Payload:    string(body),
+		Status:     "pending",
+	}
+
+	return tx.Create(&outbox).Error
 }
 
 func (h *Handler) enrichMembers(members []models.ProjectMember) []models.ProjectMember {
@@ -101,18 +141,30 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		OwnerID:     ownerID,
 	}
 
-	if err := h.db.Create(&project).Error; err != nil {
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&project).Error; err != nil {
+			return err
+		}
+
+		member := models.ProjectMember{
+			ProjectID: project.ID,
+			UserID:    ownerID,
+			Role:      "owner",
+		}
+		if err := tx.Create(&member).Error; err != nil {
+			return err
+		}
+
+		return h.enqueueOutboxEvent(tx, "project.created", "project.created", map[string]interface{}{
+			"project_id": project.ID,
+			"name":       project.Name,
+			"owner_id":   project.OwnerID,
+		})
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create project"})
 		return
 	}
-
-	// Add owner as project member
-	member := models.ProjectMember{
-		ProjectID: project.ID,
-		UserID:    ownerID,
-		Role:      "owner",
-	}
-	h.db.Create(&member)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Project created successfully",
@@ -307,13 +359,6 @@ func (h *Handler) AddProjectMember(c *gin.Context) {
 		return
 	}
 
-	// Check if already a member
-	var existingMember models.ProjectMember
-	if err := h.db.Where("project_id = ? AND user_id = ?", projectID, req.UserID).First(&existingMember).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "User is already a member of this project"})
-		return
-	}
-
 	role := req.Role
 	if role == "" {
 		role = "member"
@@ -325,7 +370,33 @@ func (h *Handler) AddProjectMember(c *gin.Context) {
 		Role:      role,
 	}
 
-	if err := h.db.Create(&member).Error; err != nil {
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		var existingMember models.ProjectMember
+		checkErr := tx.Where("project_id = ? AND user_id = ?", projectID, req.UserID).First(&existingMember).Error
+		if checkErr == nil {
+			return fmt.Errorf("member_already_exists")
+		}
+		if checkErr != nil && !errors.Is(checkErr, gorm.ErrRecordNotFound) {
+			return checkErr
+		}
+
+		if err := tx.Create(&member).Error; err != nil {
+			return err
+		}
+
+		return h.enqueueOutboxEvent(tx, "project.member_added", "project.member_added", map[string]interface{}{
+			"project_id": project.ID,
+			"project":    project.Name,
+			"user_id":    req.UserID,
+			"role":       role,
+		})
+	})
+
+	if err != nil {
+		if err.Error() == "member_already_exists" {
+			c.JSON(http.StatusConflict, gin.H{"error": "User is already a member of this project"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
 		return
 	}

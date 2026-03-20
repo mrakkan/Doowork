@@ -7,14 +7,21 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         API Gateway                              │
-│                    (Optional - Future)                          │
 └─────────────────────────────────────────────────────────────────┘
-        │               │               │               │
-        ▼               ▼               ▼               ▼
+    │               │               │               │
+    ▼               ▼               ▼               ▼
 ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
 │  User Service │ │Project Service│ │  Task Service │ │ Notification  │
 │   Port: 8081  │ │  Port: 8082   │ │  Port: 8083   │ │   Port: 8084  │
 └───────────────┘ └───────────────┘ └───────────────┘ └───────────────┘
+            │               │               ▲
+            └───────┬───────┴───────────────┘
+                ▼
+            ┌───────────────┐
+            │   RabbitMQ    │
+            │ Port: 5672    │
+            │ Mgmt: 15672   │
+            └───────────────┘
         │               │               │               │
         ▼               ▼               ▼               ▼
 ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
@@ -55,6 +62,14 @@
 - **Send Notification** - ส่ง Notification
 - **Schedule Notification** - ตั้งเวลาส่ง Notification
 - **Allow Notification** - เปิด/ปิด Notification
+- **Event Consumer** - รับ Event จาก RabbitMQ (`project.*`, `task.*`) แล้วสร้าง notification อัตโนมัติ
+
+## Event-Driven Communication
+
+- `project-service` publish: `project.created`, `project.member_added`
+- `task-service` publish: `task.created`, `task.assigned`
+- `notification-service` consume events ผ่าน RabbitMQ แล้วบันทึกลง `notifications`
+- ใช้ แ
 
 ## Quick Start
 
@@ -87,6 +102,9 @@ docker-compose down -v
 | Project Service | 8082 |
 | Task Service | 8083 |
 | Notification Service | 8084 |
+| Prometheus | 9090 |
+| RabbitMQ AMQP | 5672 |
+| RabbitMQ Management | 15672 |
 | User DB | 5432 |
 | Project DB | 5433 |
 | Task DB | 5434 |
@@ -181,7 +199,19 @@ Content-Type: application/json
 - **Database**: PostgreSQL 15
 - **Authentication**: JWT
 - **Container**: Docker & Docker Compose
+- **Monitoring**: Prometheus
+- **Message Broker**: RabbitMQ
+- **Resilience**: Circuit Breaker (gobreaker)
 - **Scheduler**: robfig/cron (for notifications)
+
+## Monitoring with Prometheus
+
+- Open Prometheus at `http://localhost:9090`
+- Check service health in **Status > Targets**
+- Example queries:
+    - `doowork_http_requests_total`
+    - `rate(doowork_http_requests_total[1m])`
+    - `histogram_quantile(0.95, sum(rate(doowork_http_request_duration_seconds_bucket[5m])) by (le, service, path))`
 
 ## Project Structure
 
@@ -245,6 +275,7 @@ Doowork/
 | DATABASE_URL | PostgreSQL connection string | - |
 | JWT_SECRET | Secret key for JWT | your-secret-key-change-in-production |
 | PORT | Service port | varies per service |
+| RABBITMQ_URL | RabbitMQ connection string | amqp://guest:guest@rabbitmq:5672/ |
 | TZ | Timezone | Asia/Bangkok |
 
 ## Task Status Values

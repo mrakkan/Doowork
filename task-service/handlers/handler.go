@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"task-service/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/sony/gobreaker"
 	"gorm.io/gorm"
 )
 
@@ -18,6 +22,8 @@ type Handler struct {
 	userServiceURL    string
 	projectServiceURL string
 	httpClient        *http.Client
+	userBreaker       *gobreaker.CircuitBreaker
+	projectBreaker    *gobreaker.CircuitBreaker
 }
 
 func NewHandler(db *gorm.DB, userServiceURL, projectServiceURL string) *Handler {
@@ -28,11 +34,33 @@ func NewHandler(db *gorm.DB, userServiceURL, projectServiceURL string) *Handler 
 		projectServiceURL = getEnv("PROJECT_SERVICE_URL", "http://project-service:8082")
 	}
 
+	userBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "task-user-service",
+		MaxRequests: 3,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
+	projectBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "task-project-service",
+		MaxRequests: 3,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
+
 	return &Handler{
 		db:                db,
 		userServiceURL:    userServiceURL,
 		projectServiceURL: projectServiceURL,
 		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		userBreaker:       userBreaker,
+		projectBreaker:    projectBreaker,
 	}
 }
 
@@ -44,11 +72,19 @@ func getEnv(key, fallback string) string {
 }
 
 func (h *Handler) userExists(userID uint) (bool, error) {
-	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
-	resp, err := h.httpClient.Get(url)
+	result, err := h.userBreaker.Execute(func() (interface{}, error) {
+		url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+		resp, err := h.httpClient.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	})
 	if err != nil {
 		return false, err
 	}
+
+	resp := result.(*http.Response)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -62,11 +98,19 @@ func (h *Handler) userExists(userID uint) (bool, error) {
 }
 
 func (h *Handler) projectExists(projectID uint) (bool, error) {
-	url := fmt.Sprintf("%s/internal/projects/%d", h.projectServiceURL, projectID)
-	resp, err := h.httpClient.Get(url)
+	result, err := h.projectBreaker.Execute(func() (interface{}, error) {
+		url := fmt.Sprintf("%s/internal/projects/%d", h.projectServiceURL, projectID)
+		resp, err := h.httpClient.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	})
 	if err != nil {
 		return false, err
 	}
+
+	resp := result.(*http.Response)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -77,6 +121,23 @@ func (h *Handler) projectExists(projectID uint) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (h *Handler) enqueueOutboxEvent(tx *gorm.DB, eventType, routingKey string, payload interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	outbox := models.OutboxEvent{
+		EventID:    uuid.NewString(),
+		EventType:  eventType,
+		RoutingKey: routingKey,
+		Payload:    string(body),
+		Status:     "pending",
+	}
+
+	return tx.Create(&outbox).Error
 }
 
 // CreateTask creates a new task
@@ -127,7 +188,23 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		HourlyRate:     req.HourlyRate,
 	}
 
-	if err := h.db.Create(&task).Error; err != nil {
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&task).Error; err != nil {
+			return err
+		}
+
+		return h.enqueueOutboxEvent(tx, "task.created", "task.created", map[string]interface{}{
+			"task_id":     task.ID,
+			"title":       task.Title,
+			"project_id":  task.ProjectID,
+			"creator_id":  task.CreatorID,
+			"priority":    task.Priority,
+			"status":      task.Status,
+			"description": task.Description,
+		})
+	})
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task"})
 		return
 	}
@@ -279,13 +356,6 @@ func (h *Handler) AssignTask(c *gin.Context) {
 		return
 	}
 
-	// Check if already assigned
-	var existingAssignment models.TaskAssignment
-	if err := h.db.Where("task_id = ? AND user_id = ?", taskID, req.UserID).First(&existingAssignment).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "User is already assigned to this task"})
-		return
-	}
-
 	role := req.Role
 	if role == "" {
 		role = "assignee"
@@ -297,7 +367,33 @@ func (h *Handler) AssignTask(c *gin.Context) {
 		Role:   role,
 	}
 
-	if err := h.db.Create(&assignment).Error; err != nil {
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		var existingAssignment models.TaskAssignment
+		checkErr := tx.Where("task_id = ? AND user_id = ?", taskID, req.UserID).First(&existingAssignment).Error
+		if checkErr == nil {
+			return fmt.Errorf("assignment_already_exists")
+		}
+		if checkErr != nil && !errors.Is(checkErr, gorm.ErrRecordNotFound) {
+			return checkErr
+		}
+
+		if err := tx.Create(&assignment).Error; err != nil {
+			return err
+		}
+
+		return h.enqueueOutboxEvent(tx, "task.assigned", "task.assigned", map[string]interface{}{
+			"task_id": task.ID,
+			"title":   task.Title,
+			"user_id": req.UserID,
+			"role":    role,
+		})
+	})
+
+	if err != nil {
+		if err.Error() == "assignment_already_exists" {
+			c.JSON(http.StatusConflict, gin.H{"error": "User is already assigned to this task"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assign task"})
 		return
 	}

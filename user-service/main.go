@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"user-service/monitoring"
 
 	"user-service/handlers"
 	"user-service/middleware"
@@ -43,6 +44,7 @@ func main() {
 
 	// Setup router
 	r := gin.Default()
+	monitoring.SetupMetrics(r, "user-service")
 
 	// Public routes
 	r.POST("/api/auth/register", h.Register)

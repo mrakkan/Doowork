@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"task-service/messaging"
+	"task-service/monitoring"
 	"time"
 
 	"task-service/handlers"
@@ -36,17 +39,36 @@ func main() {
 	}
 
 	// Auto migrate
-	db.AutoMigrate(&models.Task{}, &models.TaskAssignment{}, &models.TimeLog{})
+	db.AutoMigrate(&models.Task{}, &models.TaskAssignment{}, &models.TimeLog{}, &models.OutboxEvent{})
 
 	// Setup handlers
+	amqpURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+	publisher, err := messaging.ConnectWithRetry(amqpURL, 10, 3*time.Second)
+	if err != nil {
+		log.Printf("RabbitMQ unavailable, continuing without event publish: %v", err)
+	}
+	defer func() {
+		if publisher != nil {
+			publisher.Close()
+		}
+	}()
+
 	h := handlers.NewHandler(
 		db,
 		getEnv("USER_SERVICE_URL", "http://user-service:8081"),
 		getEnv("PROJECT_SERVICE_URL", "http://project-service:8082"),
 	)
 
+	if publisher != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		processor := messaging.NewOutboxProcessor(db, publisher, "task-service")
+		go processor.Start(ctx, 2*time.Second)
+	}
+
 	// Setup router
 	r := gin.Default()
+	monitoring.SetupMetrics(r, "task-service")
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {

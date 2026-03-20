@@ -1,4 +1,33 @@
 services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      user-service:
+        condition: service_started
+      project-service:
+        condition: service_started
+      task-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+      gateway-service:
+        condition: service_started
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   
   #User DB
   user-db:
@@ -99,9 +128,12 @@ services:
       - DATABASE_URL=host=project-db user=admin password=password dbname=project_db port=5432 sslmode=disable
       - JWT_SECRET=your-secret-key-change-in-production
       - USER_SERVICE_URL=http://user-service:8081
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - PORT=8082
     depends_on:
       project-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   # Task Service (Port 8083)
@@ -120,9 +152,12 @@ services:
       - JWT_SECRET=your-secret-key-change-in-production
       - USER_SERVICE_URL=http://user-service:8081
       - PROJECT_SERVICE_URL=http://project-service:8082
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - PORT=8083
     depends_on:
       task-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   # Notification Service (Port 8084)
@@ -138,10 +173,13 @@ services:
       - DATABASE_URL=host=notification-db user=admin password=password dbname=notification_db port=5432 sslmode=disable
       - JWT_SECRET=your-secret-key-change-in-production
       - USER_SERVICE_URL=http://user-service:8081
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - PORT=8084
       - TZ=Asia/Bangkok
     depends_on:
       notification-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   gateway-service:

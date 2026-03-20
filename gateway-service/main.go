@@ -6,8 +6,53 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var (
+	httpRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doowork_http_requests_total",
+			Help: "Total number of HTTP requests.",
+		},
+		[]string{"service", "method", "path", "status"},
+	)
+	httpRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "doowork_http_request_duration_seconds",
+			Help:    "HTTP request duration in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service", "method", "path"},
+	)
+)
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func instrumentHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		next.ServeHTTP(recorder, r)
+
+		httpRequestsTotal.WithLabelValues("gateway-service", r.Method, r.URL.Path, strconv.Itoa(recorder.status)).Inc()
+		httpRequestDuration.WithLabelValues("gateway-service", r.Method, r.URL.Path).Observe(time.Since(start).Seconds())
+	})
+}
 
 type Gateway struct {
 	userProxy         *httputil.ReverseProxy
@@ -87,10 +132,15 @@ func getEnv(key, fallback string) string {
 func main() {
 	port := getEnv("PORT", "8000")
 	gateway := NewGateway()
+	prometheus.MustRegister(httpRequestsTotal, httpRequestDuration)
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/", instrumentHandler(gateway))
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: gateway,
+		Handler: mux,
 	}
 
 	log.Printf("Gateway service starting on port %s", port)

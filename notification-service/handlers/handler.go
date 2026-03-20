@@ -1,14 +1,21 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"notification-service/messaging"
 	"notification-service/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sony/gobreaker"
 	"gorm.io/gorm"
 )
 
@@ -16,17 +23,31 @@ type Handler struct {
 	db             *gorm.DB
 	userServiceURL string
 	httpClient     *http.Client
+	consumer       *messaging.Consumer
+	userBreaker    *gobreaker.CircuitBreaker
 }
 
-func NewHandler(db *gorm.DB, userServiceURL string) *Handler {
+func NewHandler(db *gorm.DB, userServiceURL string, consumer *messaging.Consumer) *Handler {
 	if userServiceURL == "" {
 		userServiceURL = getEnv("USER_SERVICE_URL", "http://user-service:8081")
 	}
+
+	userBreaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "notification-user-service",
+		MaxRequests: 3,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
 
 	return &Handler{
 		db:             db,
 		userServiceURL: userServiceURL,
 		httpClient:     &http.Client{Timeout: 5 * time.Second},
+		consumer:       consumer,
+		userBreaker:    userBreaker,
 	}
 }
 
@@ -38,11 +59,19 @@ func getEnv(key, fallback string) string {
 }
 
 func (h *Handler) userExists(userID uint) (bool, error) {
-	url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
-	resp, err := h.httpClient.Get(url)
+	result, err := h.userBreaker.Execute(func() (interface{}, error) {
+		url := fmt.Sprintf("%s/internal/users/%d", h.userServiceURL, userID)
+		resp, err := h.httpClient.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	})
 	if err != nil {
 		return false, err
 	}
+
+	resp := result.(*http.Response)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -53,6 +82,137 @@ func (h *Handler) userExists(userID uint) (bool, error) {
 	}
 
 	return true, nil
+}
+
+type projectCreatedPayload struct {
+	ProjectID uint   `json:"project_id"`
+	Name      string `json:"name"`
+	OwnerID   uint   `json:"owner_id"`
+}
+
+type projectMemberAddedPayload struct {
+	ProjectID uint   `json:"project_id"`
+	Project   string `json:"project"`
+	UserID    uint   `json:"user_id"`
+	Role      string `json:"role"`
+}
+
+type taskCreatedPayload struct {
+	TaskID    uint   `json:"task_id"`
+	Title     string `json:"title"`
+	ProjectID uint   `json:"project_id"`
+	CreatorID uint   `json:"creator_id"`
+}
+
+type taskAssignedPayload struct {
+	TaskID uint   `json:"task_id"`
+	Title  string `json:"title"`
+	UserID uint   `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+func (h *Handler) StartEventConsumer() {
+	if h.consumer == nil {
+		return
+	}
+
+	msgs, err := h.consumer.Consume()
+	if err != nil {
+		log.Printf("failed to consume rabbitmq messages: %v", err)
+		return
+	}
+
+	go func() {
+		for msg := range msgs {
+			if err := h.handleEvent(msg.Body); err != nil {
+				log.Printf("failed to handle event: %v", err)
+				msg.Nack(false, true)
+				continue
+			}
+
+			msg.Ack(false)
+		}
+	}()
+}
+
+func (h *Handler) handleEvent(body []byte) error {
+	var event messaging.Event
+	if err := json.Unmarshal(body, &event); err != nil {
+		return err
+	}
+
+	eventID := event.EventID
+	if eventID == "" {
+		hash := sha256.Sum256(body)
+		eventID = hex.EncodeToString(hash[:])
+	}
+
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		var existing models.ProcessedEvent
+		err := tx.Where("event_id = ?", eventID).First(&existing).Error
+		if err == nil {
+			return nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		if err := h.applyEvent(tx, event, body); err != nil {
+			return err
+		}
+
+		processed := models.ProcessedEvent{
+			EventID:     eventID,
+			EventType:   event.Type,
+			Source:      event.Source,
+			ProcessedAt: time.Now().UTC(),
+		}
+		return tx.Create(&processed).Error
+	})
+}
+
+func (h *Handler) applyEvent(tx *gorm.DB, event messaging.Event, body []byte) error {
+	switch event.Type {
+	case "project.created":
+		var payload projectCreatedPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		return h.createEventNotification(tx, payload.OwnerID, "Project Created", fmt.Sprintf("Project '%s' has been created", payload.Name), "project", string(body))
+	case "project.member_added":
+		var payload projectMemberAddedPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		return h.createEventNotification(tx, payload.UserID, "Added to Project", fmt.Sprintf("You were added to project '%s' as %s", payload.Project, payload.Role), "project", string(body))
+	case "task.created":
+		var payload taskCreatedPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		return h.createEventNotification(tx, payload.CreatorID, "Task Created", fmt.Sprintf("Task '%s' has been created", payload.Title), "task", string(body))
+	case "task.assigned":
+		var payload taskAssignedPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		return h.createEventNotification(tx, payload.UserID, "Task Assigned", fmt.Sprintf("You were assigned to task '%s'", payload.Title), "task", string(body))
+	default:
+		return nil
+	}
+}
+
+func (h *Handler) createEventNotification(tx *gorm.DB, userID uint, title, message, notifType, data string) error {
+	notification := models.Notification{
+		UserID:  userID,
+		Title:   title,
+		Message: message,
+		Type:    notifType,
+		Read:    false,
+		Data:    data,
+	}
+
+	return tx.Create(&notification).Error
 }
 
 // SendNotification sends a notification to a user
