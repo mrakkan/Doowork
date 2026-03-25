@@ -1,6 +1,6 @@
 # Doowork - Project Management Microservices
 
-ระบบจัดการโปรเจคแบบ Microservices สร้างด้วย Go (Golang)
+ระบบจัดการโปรเจคแบบ Microservices สร้างด้วย Go
 
 ## Architecture
 
@@ -69,7 +69,7 @@
 - `project-service` publish: `project.created`, `project.member_added`
 - `task-service` publish: `task.created`, `task.assigned`
 - `notification-service` consume events ผ่าน RabbitMQ แล้วบันทึกลง `notifications`
-- ใช้ แ
+- ใช้ Circuit Breaker สำหรับการเรียกข้าม service
 
 ## Quick Start
 
@@ -190,6 +190,181 @@ Content-Type: application/json
     "type": "task"
 }
 ```
+
+## Test Cases (5 ต่อ Service)
+
+### User Service
+- **TC-USER-01 Register Success**: `POST /api/auth/register` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "email": "user01@example.com",
+            "password": "password123",
+            "name": "User 01"
+        }
+        ```
+- **TC-USER-02 Register Duplicate Email**: `POST /api/auth/register` (email เดิม) ควรได้ `409`
+    - Raw JSON Body:
+        ```json
+        {
+            "email": "user01@example.com",
+            "password": "password123",
+            "name": "User Duplicate"
+        }
+        ```
+- **TC-USER-03 Login Success**: `POST /api/auth/login` ควรได้ `200` และมี `token`
+    - Raw JSON Body:
+        ```json
+        {
+            "email": "user01@example.com",
+            "password": "password123"
+        }
+        ```
+- **TC-USER-04 Login Invalid Password**: `POST /api/auth/login` ควรได้ `401`
+    - Raw JSON Body:
+        ```json
+        {
+            "email": "user01@example.com",
+            "password": "wrong-password"
+        }
+        ```
+- **TC-USER-05 Get Current User**: `GET /api/users/me` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+
+### Project Service
+- **TC-PROJ-01 Create Project**: `POST /api/projects` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "name": "Project Alpha",
+            "description": "First project",
+            "budget": 50000
+        }
+        ```
+- **TC-PROJ-02 List Projects**: `GET /api/projects` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+- **TC-PROJ-03 Get Project By ID**: `GET /api/projects/:id` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+- **TC-PROJ-04 Add Project Member**: `POST /api/projects/:id/members` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 2,
+            "role": "member"
+        }
+        ```
+- **TC-PROJ-05 Add Duplicate Member**: `POST /api/projects/:id/members` (user เดิม) ควรได้ `409`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 2,
+            "role": "member"
+        }
+        ```
+
+### Task Service
+- **TC-TASK-01 Create Task**: `POST /api/tasks` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "title": "Implement API",
+            "description": "Build project API",
+            "project_id": 1,
+            "priority": "high",
+            "estimated_hours": 8,
+            "hourly_rate": 500
+        }
+        ```
+- **TC-TASK-02 Create Task Invalid Project**: `POST /api/tasks` ควรได้ `400`
+    - Raw JSON Body:
+        ```json
+        {
+            "title": "Invalid Project Task",
+            "description": "Should fail",
+            "project_id": 99999,
+            "priority": "medium",
+            "estimated_hours": 3,
+            "hourly_rate": 300
+        }
+        ```
+- **TC-TASK-03 Assign Task Success**: `POST /api/tasks/:id/assign` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 2,
+            "role": "assignee"
+        }
+        ```
+- **TC-TASK-04 Assign Task Duplicate**: `POST /api/tasks/:id/assign` (user เดิม) ควรได้ `409`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 2,
+            "role": "assignee"
+        }
+        ```
+- **TC-TASK-05 Update Task Status**: `PUT /api/tasks/:id/status` ควรได้ `200`
+    - Raw JSON Body:
+        ```json
+        {
+            "status": "in_progress"
+        }
+        ```
+
+### Notification Service
+- **TC-NOTI-01 Send Notification Success**: `POST /api/notifications` ควรได้ `201`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 1,
+            "title": "Task Assigned",
+            "message": "You have been assigned a new task",
+            "type": "task"
+        }
+        ```
+- **TC-NOTI-02 Send Notification User Not Found**: `POST /api/notifications` ควรได้ `400`
+    - Raw JSON Body:
+        ```json
+        {
+            "user_id": 99999,
+            "title": "Invalid User",
+            "message": "This should fail",
+            "type": "task"
+        }
+        ```
+- **TC-NOTI-03 Get Notifications**: `GET /api/notifications` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+- **TC-NOTI-04 Mark As Read**: `PUT /api/notifications/:id/read` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+- **TC-NOTI-05 Update Preferences**: `PUT /api/notifications/preferences` ควรได้ `200`
+    - Raw JSON Body:
+        ```json
+        {
+            "allow_all": true,
+            "allow_task": true,
+            "allow_project": true,
+            "email_enabled": false,
+            "push_enabled": true
+        }
+        ```
+
+### Gateway Service
+- **TC-GW-01 Route Auth Request**: `POST /api/auth/login` ผ่าน `:8000` ควร route ไป user-service
+    - Raw JSON Body:
+        ```json
+        {
+            "email": "user01@example.com",
+            "password": "password123"
+        }
+        ```
+- **TC-GW-02 Route Project Request**: `GET /api/projects` ผ่าน `:8000` ควร route ไป project-service
+    - Raw JSON Body: `(none)`
+- **TC-GW-03 Route Task Price Request**: `GET /api/projects/:id/calculate-price` ผ่าน `:8000` ควร route ไป task-service
+    - Raw JSON Body: `(none)`
+- **TC-GW-04 Health Check**: `GET /health` ผ่าน `:8000` ควรได้ `200`
+    - Raw JSON Body: `(none)`
+- **TC-GW-05 Unknown Path**: เรียก `GET /unknown` ผ่าน `:8000` ควรได้ `404`
+    - Raw JSON Body: `(none)`
 
 ## Tech Stack
 
