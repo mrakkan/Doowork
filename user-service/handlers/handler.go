@@ -29,7 +29,6 @@ func getJWTSecret() []byte {
 	return []byte(secret)
 }
 
-// Register creates a new user
 func (h *Handler) Register(c *gin.Context) {
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -37,14 +36,12 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	// Check if user exists
 	var existingUser models.User
 	if err := h.db.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
 	}
 
-	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
@@ -69,7 +66,6 @@ func (h *Handler) Register(c *gin.Context) {
 	})
 }
 
-// Login authenticates a user and returns a JWT token
 func (h *Handler) Login(c *gin.Context) {
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -88,7 +84,6 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// Generate JWT token
 	expiresAt := time.Now().Add(24 * time.Hour)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID,
@@ -102,7 +97,6 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// Save session
 	session := models.Session{
 		UserID:    user.ID,
 		Token:     tokenString,
@@ -117,7 +111,6 @@ func (h *Handler) Login(c *gin.Context) {
 	})
 }
 
-// Logout invalidates the current session
 func (h *Handler) Logout(c *gin.Context) {
 	tokenString := c.GetHeader("Authorization")
 	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
@@ -129,7 +122,6 @@ func (h *Handler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
-// GetCurrentUser returns the current authenticated user
 func (h *Handler) GetCurrentUser(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -146,7 +138,6 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
-// GetUserByID returns a user by ID for internal service-to-service calls
 func (h *Handler) GetUserByID(c *gin.Context) {
 	id := c.Param("id")
 
@@ -164,7 +155,6 @@ func (h *Handler) GetUserByID(c *gin.Context) {
 	})
 }
 
-// AddMember adds a member to a project
 func (h *Handler) AddMember(c *gin.Context) {
 	var req models.AddMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -172,14 +162,12 @@ func (h *Handler) AddMember(c *gin.Context) {
 		return
 	}
 
-	// Check if user exists
 	var user models.User
 	if err := h.db.First(&user, req.UserID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
-	// Check if already a member
 	var existingMember models.Member
 	if err := h.db.Where("user_id = ? AND project_id = ?", req.UserID, req.ProjectID).First(&existingMember).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User is already a member of this project"})
@@ -210,7 +198,6 @@ func (h *Handler) AddMember(c *gin.Context) {
 	})
 }
 
-// GetMembers returns all members
 func (h *Handler) GetMembers(c *gin.Context) {
 	projectID := c.Query("project_id")
 
@@ -229,7 +216,6 @@ func (h *Handler) GetMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, members)
 }
 
-// GetMember returns a specific member
 func (h *Handler) GetMember(c *gin.Context) {
 	id := c.Param("id")
 
@@ -242,7 +228,6 @@ func (h *Handler) GetMember(c *gin.Context) {
 	c.JSON(http.StatusOK, member)
 }
 
-// EditMember updates a member's role
 func (h *Handler) EditMember(c *gin.Context) {
 	id := c.Param("id")
 
@@ -275,7 +260,6 @@ func (h *Handler) EditMember(c *gin.Context) {
 	})
 }
 
-// DeleteMember removes a member from a project
 func (h *Handler) DeleteMember(c *gin.Context) {
 	id := c.Param("id")
 

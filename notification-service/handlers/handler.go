@@ -215,7 +215,6 @@ func (h *Handler) createEventNotification(tx *gorm.DB, userID uint, title, messa
 	return tx.Create(&notification).Error
 }
 
-// SendNotification sends a notification to a user
 func (h *Handler) SendNotification(c *gin.Context) {
 	var req models.SendNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -233,7 +232,6 @@ func (h *Handler) SendNotification(c *gin.Context) {
 		return
 	}
 
-	// Check user preferences
 	var pref models.NotificationPreference
 	if err := h.db.Where("user_id = ?", req.UserID).First(&pref).Error; err == nil {
 		if !pref.AllowAll {
@@ -241,7 +239,6 @@ func (h *Handler) SendNotification(c *gin.Context) {
 			return
 		}
 
-		// Check specific type preferences
 		switch req.Type {
 		case "task":
 			if !pref.AllowTask {
@@ -281,7 +278,6 @@ func (h *Handler) SendNotification(c *gin.Context) {
 	})
 }
 
-// GetNotifications returns all notifications for the current user
 func (h *Handler) GetNotifications(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	unreadOnly := c.Query("unread") == "true"
@@ -301,7 +297,6 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 	c.JSON(http.StatusOK, notifications)
 }
 
-// GetNotification returns a specific notification
 func (h *Handler) GetNotification(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -315,7 +310,6 @@ func (h *Handler) GetNotification(c *gin.Context) {
 	c.JSON(http.StatusOK, notification)
 }
 
-// MarkAsRead marks a notification as read
 func (h *Handler) MarkAsRead(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -341,7 +335,6 @@ func (h *Handler) MarkAsRead(c *gin.Context) {
 	})
 }
 
-// MarkAllAsRead marks all notifications as read for the current user
 func (h *Handler) MarkAllAsRead(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -356,7 +349,6 @@ func (h *Handler) MarkAllAsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "All notifications marked as read"})
 }
 
-// DeleteNotification deletes a notification
 func (h *Handler) DeleteNotification(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -375,7 +367,6 @@ func (h *Handler) DeleteNotification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Notification deleted successfully"})
 }
 
-// ScheduleNotification schedules a notification for later
 func (h *Handler) ScheduleNotification(c *gin.Context) {
 	var req models.ScheduleNotificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -421,7 +412,6 @@ func (h *Handler) ScheduleNotification(c *gin.Context) {
 	})
 }
 
-// GetScheduledNotifications returns all scheduled notifications for the current user
 func (h *Handler) GetScheduledNotifications(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
@@ -436,7 +426,6 @@ func (h *Handler) GetScheduledNotifications(c *gin.Context) {
 	c.JSON(http.StatusOK, scheduled)
 }
 
-// UpdateScheduledNotification updates a scheduled notification
 func (h *Handler) UpdateScheduledNotification(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -489,7 +478,6 @@ func (h *Handler) UpdateScheduledNotification(c *gin.Context) {
 	})
 }
 
-// CancelScheduledNotification cancels a scheduled notification
 func (h *Handler) CancelScheduledNotification(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("user_id")
@@ -509,13 +497,11 @@ func (h *Handler) CancelScheduledNotification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Scheduled notification cancelled successfully"})
 }
 
-// GetPreferences returns notification preferences for the current user
 func (h *Handler) GetPreferences(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	var pref models.NotificationPreference
 	if err := h.db.Where("user_id = ?", userID).First(&pref).Error; err != nil {
-		// Create default preferences
 		pref = models.NotificationPreference{
 			UserID:        userID.(uint),
 			AllowAll:      true,
@@ -532,13 +518,11 @@ func (h *Handler) GetPreferences(c *gin.Context) {
 	c.JSON(http.StatusOK, pref)
 }
 
-// UpdatePreferences updates notification preferences
 func (h *Handler) UpdatePreferences(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	var pref models.NotificationPreference
 	if err := h.db.Where("user_id = ?", userID).First(&pref).Error; err != nil {
-		// Create if not exists
 		pref = models.NotificationPreference{
 			UserID:        userID.(uint),
 			AllowAll:      true,
@@ -597,7 +581,6 @@ func (h *Handler) UpdatePreferences(c *gin.Context) {
 	})
 }
 
-// AllowNotifications enables or disables all notifications
 func (h *Handler) AllowNotifications(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 

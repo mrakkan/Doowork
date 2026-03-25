@@ -140,7 +140,6 @@ func (h *Handler) enqueueOutboxEvent(tx *gorm.DB, eventType, routingKey string, 
 	return tx.Create(&outbox).Error
 }
 
-// CreateTask creates a new task
 func (h *Handler) CreateTask(c *gin.Context) {
 	var req models.CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -215,7 +214,6 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	})
 }
 
-// GetTasks returns all tasks (with optional filtering)
 func (h *Handler) GetTasks(c *gin.Context) {
 	projectID := c.Query("project_id")
 	status := c.Query("status")
@@ -245,7 +243,6 @@ func (h *Handler) GetTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, tasks)
 }
 
-// GetTask returns a specific task
 func (h *Handler) GetTask(c *gin.Context) {
 	id := c.Param("id")
 
@@ -258,7 +255,6 @@ func (h *Handler) GetTask(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
-// UpdateTask updates a task
 func (h *Handler) UpdateTask(c *gin.Context) {
 	id := c.Param("id")
 
@@ -274,7 +270,6 @@ func (h *Handler) UpdateTask(c *gin.Context) {
 		return
 	}
 
-	// Update fields
 	if req.Title != "" {
 		task.Title = req.Title
 	}
@@ -308,7 +303,6 @@ func (h *Handler) UpdateTask(c *gin.Context) {
 	})
 }
 
-// DeleteTask deletes a task
 func (h *Handler) DeleteTask(c *gin.Context) {
 	id := c.Param("id")
 
@@ -318,7 +312,6 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 		return
 	}
 
-	// Delete assignments and time logs
 	h.db.Where("task_id = ?", id).Delete(&models.TaskAssignment{})
 	h.db.Where("task_id = ?", id).Delete(&models.TimeLog{})
 
@@ -330,7 +323,6 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task deleted successfully"})
 }
 
-// AssignTask assigns a user to a task
 func (h *Handler) AssignTask(c *gin.Context) {
 	taskID := c.Param("id")
 
@@ -404,7 +396,6 @@ func (h *Handler) AssignTask(c *gin.Context) {
 	})
 }
 
-// UnassignTask removes a user from a task
 func (h *Handler) UnassignTask(c *gin.Context) {
 	taskID := c.Param("id")
 	userID := c.Param("user_id")
@@ -423,7 +414,6 @@ func (h *Handler) UnassignTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task unassigned successfully"})
 }
 
-// GetTaskStatus returns the status of a task
 func (h *Handler) GetTaskStatus(c *gin.Context) {
 	id := c.Param("id")
 
@@ -433,13 +423,11 @@ func (h *Handler) GetTaskStatus(c *gin.Context) {
 		return
 	}
 
-	// Calculate total time spent
 	var totalTime float64
 	for _, log := range task.TimeLogs {
 		totalTime += log.Hours
 	}
 
-	// Calculate progress
 	var progress float64
 	if task.EstimatedHours > 0 {
 		progress = (totalTime / task.EstimatedHours) * 100
@@ -448,7 +436,6 @@ func (h *Handler) GetTaskStatus(c *gin.Context) {
 		}
 	}
 
-	// Check if overdue
 	var isOverdue bool
 	if task.DueDate != nil && task.Status != "done" && task.Status != "cancelled" {
 		isOverdue = time.Now().After(*task.DueDate)
@@ -470,7 +457,6 @@ func (h *Handler) GetTaskStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// UpdateTaskStatus updates only the status of a task
 func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 	id := c.Param("id")
 
@@ -486,7 +472,6 @@ func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 		return
 	}
 
-	// Validate status
 	validStatuses := map[string]bool{
 		"todo":        true,
 		"in_progress": true,
@@ -511,7 +496,6 @@ func (h *Handler) UpdateTaskStatus(c *gin.Context) {
 	})
 }
 
-// LogTime logs time spent on a task
 func (h *Handler) LogTime(c *gin.Context) {
 	taskID := c.Param("id")
 
@@ -553,7 +537,6 @@ func (h *Handler) LogTime(c *gin.Context) {
 	})
 }
 
-// GetTimeLogs returns all time logs for a task
 func (h *Handler) GetTimeLogs(c *gin.Context) {
 	taskID := c.Param("id")
 
@@ -566,7 +549,6 @@ func (h *Handler) GetTimeLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, timeLogs)
 }
 
-// CalculateTime calculates time metrics for a task
 func (h *Handler) CalculateTime(c *gin.Context) {
 	id := c.Param("id")
 
@@ -576,13 +558,11 @@ func (h *Handler) CalculateTime(c *gin.Context) {
 		return
 	}
 
-	// Calculate actual hours
 	var actualHours float64
 	for _, log := range task.TimeLogs {
 		actualHours += log.Hours
 	}
 
-	// Calculate remaining and variance
 	remainingHours := task.EstimatedHours - actualHours
 	if remainingHours < 0 {
 		remainingHours = 0
@@ -601,7 +581,6 @@ func (h *Handler) CalculateTime(c *gin.Context) {
 	c.JSON(http.StatusOK, calculation)
 }
 
-// CalculatePrice calculates price metrics for a task
 func (h *Handler) CalculatePrice(c *gin.Context) {
 	id := c.Param("id")
 
@@ -611,7 +590,6 @@ func (h *Handler) CalculatePrice(c *gin.Context) {
 		return
 	}
 
-	// Calculate actual hours
 	var actualHours float64
 	for _, log := range task.TimeLogs {
 		actualHours += log.Hours
@@ -634,7 +612,6 @@ func (h *Handler) CalculatePrice(c *gin.Context) {
 	c.JSON(http.StatusOK, calculation)
 }
 
-// CalculateProjectPrice calculates total price for all tasks in a project
 func (h *Handler) CalculateProjectPrice(c *gin.Context) {
 	projectID := c.Param("project_id")
 	projectIDUint, _ := strconv.ParseUint(projectID, 10, 32)

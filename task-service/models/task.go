@@ -46,7 +46,6 @@ type TimeLog struct {
 	LogDate     time.Time      `gorm:"not null" json:"log_date"`
 }
 
-// Request structs
 type CreateTaskRequest struct {
 	Title          string     `json:"title" binding:"required"`
 	Description    string     `json:"description"`
@@ -82,7 +81,6 @@ type LogTimeRequest struct {
 	LogDate     time.Time `json:"log_date"`
 }
 
-// Response structs
 type TaskStatus struct {
 	TaskID         uint       `json:"task_id"`
 	Title          string     `json:"title"`

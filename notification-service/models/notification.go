@@ -54,7 +54,6 @@ type NotificationPreference struct {
 	QuietHoursEnd   *int           `json:"quiet_hours_end"`
 }
 
-// Request structs
 type SendNotificationRequest struct {
 	UserID  uint   `json:"user_id" binding:"required"`
 	Title   string `json:"title" binding:"required"`

@@ -112,7 +112,6 @@ func (h *Handler) enrichMembers(members []models.ProjectMember) []models.Project
 	return members
 }
 
-// CreateProject creates a new project
 func (h *Handler) CreateProject(c *gin.Context) {
 	var req models.CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -172,13 +171,11 @@ func (h *Handler) CreateProject(c *gin.Context) {
 	})
 }
 
-// GetProjects returns all projects for the current user
 func (h *Handler) GetProjects(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
 	var projects []models.Project
 
-	// Get projects where user is a member
 	subQuery := h.db.Table("project_members").
 		Select("project_id").
 		Where("user_id = ? AND deleted_at IS NULL", userID)
@@ -198,7 +195,6 @@ func (h *Handler) GetProjects(c *gin.Context) {
 	c.JSON(http.StatusOK, projects)
 }
 
-// GetProject returns a specific project
 func (h *Handler) GetProject(c *gin.Context) {
 	id := c.Param("id")
 
@@ -213,7 +209,6 @@ func (h *Handler) GetProject(c *gin.Context) {
 	c.JSON(http.StatusOK, project)
 }
 
-// GetProjectInternal returns minimal project data for internal service-to-service calls
 func (h *Handler) GetProjectInternal(c *gin.Context) {
 	id := c.Param("id")
 
@@ -231,7 +226,6 @@ func (h *Handler) GetProjectInternal(c *gin.Context) {
 	})
 }
 
-// UpdateProject updates a project
 func (h *Handler) UpdateProject(c *gin.Context) {
 	id := c.Param("id")
 
@@ -247,7 +241,6 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 		return
 	}
 
-	// Update fields
 	if req.Name != "" {
 		project.Name = req.Name
 	}
@@ -278,7 +271,6 @@ func (h *Handler) UpdateProject(c *gin.Context) {
 	})
 }
 
-// DeleteProject deletes a project
 func (h *Handler) DeleteProject(c *gin.Context) {
 	id := c.Param("id")
 
@@ -288,7 +280,6 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 		return
 	}
 
-	// Delete project members
 	h.db.Where("project_id = ?", id).Delete(&models.ProjectMember{})
 
 	if err := h.db.Delete(&project).Error; err != nil {
@@ -299,7 +290,6 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Project deleted successfully"})
 }
 
-// GetProjectStatus returns the status of a project
 func (h *Handler) GetProjectStatus(c *gin.Context) {
 	id := c.Param("id")
 
@@ -309,7 +299,6 @@ func (h *Handler) GetProjectStatus(c *gin.Context) {
 		return
 	}
 
-	// Calculate days left
 	var daysLeft int
 	if project.EndDate != nil {
 		daysLeft = int(time.Until(*project.EndDate).Hours() / 24)
@@ -333,7 +322,6 @@ func (h *Handler) GetProjectStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// AddProjectMember adds a member to a project
 func (h *Handler) AddProjectMember(c *gin.Context) {
 	projectID := c.Param("id")
 
@@ -409,7 +397,6 @@ func (h *Handler) AddProjectMember(c *gin.Context) {
 	})
 }
 
-// GetProjectMembers returns all members of a project
 func (h *Handler) GetProjectMembers(c *gin.Context) {
 	projectID := c.Param("id")
 
@@ -424,7 +411,6 @@ func (h *Handler) GetProjectMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, members)
 }
 
-// RemoveProjectMember removes a member from a project
 func (h *Handler) RemoveProjectMember(c *gin.Context) {
 	projectID := c.Param("id")
 	memberID := c.Param("member_id")

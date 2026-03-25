@@ -23,7 +23,6 @@ func NewScheduler(db *gorm.DB) *Scheduler {
 }
 
 func (s *Scheduler) Start() {
-	// Check for pending notifications every minute
 	s.cron.AddFunc("* * * * *", func() {
 		s.processScheduledNotifications()
 	})
@@ -47,7 +46,6 @@ func (s *Scheduler) processScheduledNotifications() {
 	}
 
 	for _, sn := range scheduled {
-		// Create the actual notification
 		notification := models.Notification{
 			UserID:  sn.UserID,
 			Title:   sn.Title,
@@ -62,15 +60,12 @@ func (s *Scheduler) processScheduledNotifications() {
 			continue
 		}
 
-		// Update scheduled notification status
 		sentAt := time.Now()
 		sn.Status = "sent"
 		sn.SentAt = &sentAt
 		s.db.Save(&sn)
 
-		// Handle recurring notifications
 		if sn.Recurring && sn.CronSchedule != "" {
-			// Create next scheduled notification
 			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 			schedule, err := parser.Parse(sn.CronSchedule)
 			if err != nil {

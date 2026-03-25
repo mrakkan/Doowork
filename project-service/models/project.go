@@ -39,7 +39,6 @@ type UserSummary struct {
 	Role  string `json:"role"`
 }
 
-// Request/Response structs
 type CreateProjectRequest struct {
 	Name        string     `json:"name" binding:"required"`
 	Description string     `json:"description"`

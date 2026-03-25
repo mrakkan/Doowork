@@ -29,7 +29,7 @@ services:
       retries: 5
 
   
-  #User DB
+
   user-db:
     image: postgres:15-alpine
     environment:
@@ -46,7 +46,7 @@ services:
       timeout: 5s
       retries: 5
 
-  #Project DB
+
   project-db:
     image: postgres:15-alpine
     environment:
@@ -63,7 +63,7 @@ services:
       timeout: 5s
       retries: 5
 
-  #Task DB
+
   task-db:
     image: postgres:15-alpine
     environment:
@@ -80,7 +80,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # 4. Notification DB
   notification-db:
     image: postgres:15-alpine
     environment:
@@ -99,9 +98,6 @@ services:
 
 
 
-  # User Service (Port 8081)
-  # - Register, Login, Logout
-  # - Member Management (Add, Edit, Delete)
   user-service:
     build: 
       context: ./user-service
@@ -115,10 +111,6 @@ services:
       user-db:
         condition: service_healthy
 
-  # Project Service (Port 8082)
-  # - Project CRUD
-  # - Project Status
-  # - Project Members
   project-service:
     build: 
       context: ./project-service
@@ -136,12 +128,6 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  # Task Service (Port 8083)
-  # - Task CRUD
-  # - Task Assignment
-  # - Task Status
-  # - Time Tracking
-  # - Price Calculation
   task-service:
     build: 
       context: ./task-service
@@ -161,9 +147,6 @@ services:
         condition: service_healthy
 
   # Notification Service (Port 8084)
-  # - Send Notifications
-  # - Schedule Notifications
-  # - Notification Preferences
   notification-service:
     build: 
       context: ./notification-service
